@@ -1,0 +1,43 @@
+var _user$project$Main$readFromDict = F2(
+	function (key, map) {
+		var _p0 = A2(_elm_lang$core$Dict$get, key, map);
+		if (_p0.ctor === 'Nothing') {
+			return 0;
+		} else {
+			return _p0._0;
+		}
+	});
+var _user$project$Main$process = F2(
+	function (x, y) {
+		var _p1 = y;
+		if (_p1.ctor === 'Just') {
+			return _elm_lang$core$Maybe$Just(x);
+		} else {
+			return _elm_lang$core$Maybe$Just(0);
+		}
+	});
+var _user$project$Main$insertIntoDict = F3(
+	function (key, input, myMap) {
+		var newMap = function () {
+			var _p2 = A2(_elm_lang$core$Dict$get, key, myMap);
+			if (_p2.ctor === 'Nothing') {
+				return A3(_elm_lang$core$Dict$insert, key, input, myMap);
+			} else {
+				return A3(
+					_elm_lang$core$Dict$update,
+					key,
+					_user$project$Main$process(input),
+					myMap);
+			}
+		}();
+		return newMap;
+	});
+var _user$project$Main$view = function () {
+	var appleDict = A3(_user$project$Main$insertIntoDict, 'Apple', 1, _elm_lang$core$Dict$empty);
+	var appleDict2 = A3(_user$project$Main$insertIntoDict, 'Apple', 2, appleDict);
+	return A2(_user$project$Main$readFromDict, 'Apple', appleDict2);
+}();
+var _user$project$Main$main = {
+	main: _elm_lang$html$Html$text(
+		_elm_lang$core$Basics$toString(_user$project$Main$view))
+};
