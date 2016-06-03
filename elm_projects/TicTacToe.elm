@@ -8,139 +8,142 @@ import Html.Attributes exposing (style)
 main = App.program{init=init,view = view ,update = update,subscriptions= subscriptions}
 
 type Player = PlayerO | PlayerX | Empty
-type GameBoard = EmptyBoard (List Cell) | FinishedBoard (List Cell) | PlayBoard (List Cell) | WinBoard (List Cell) String | TieBoard (List Cell)
-type Status = LastMove String | Default | NotValidMove String | GameResult String
-type Response = Board (List Cell)| Error String
+type Board = EmptyBoard Cells | PlayBoard Cells | WinBoard Cells String (List Position )| TieBoard Cells String
+type Status = LastMove String | Default | NotValidMove String | GameResult String | Error String
+type BoardUpdateResponse = Success (List Cell)| Failure String
+
+type alias Cells = List Cell
 type alias Cell = {
-    position : (Int,Int),    
+    position : Position,    
     player : Player    
 }
+type alias Position = (Int,Int)
+
 type alias Model = {
-  board : List Cell
+  board : Cells
   ,status : Status 
   ,nextPlayer : Player    
 }
-model = Model drawBoardList Default PlayerO
+model = Model defaultCells Default PlayerO
 
-type Msg = Played (Int,Int)
+type Msg = Played Position
 
 update : Msg -> Model -> (Model,Cmd Msg)
 update msg model =  case msg of
-  Played point->  
-    let       
-      xVal = ((fst point) * 100)
-      yVal = ((snd point)*100)
-      newModel = case (updateBoard model.nextPlayer point model.board) of
-        Board b ->
-            case (gameResult b) of
-               _ -> {
-                model | board = b
-                ,status = renderStatus b point
-                ,nextPlayer = if model.nextPlayer == PlayerO then PlayerX else PlayerO
-            }  
-        Error msg -> {
-          model  | status = NotValidMove msg}
-    in        
-      (newModel,Cmd.none)
-renderStatus : List Cell -> (Int,Int) -> Status
-renderStatus board point =   
-  case (gameResult board) of
-    TieBoard b -> GameResult "Tie"
-    WinBoard b msg -> GameResult msg
-    PlayBoard b -> LastMove (toString point)
-    _ -> GameResult "UnKnown"
+  Played position->  
+    case (fetchGameResult model.board) of 
+        PlayBoard b->         
+            let       
+              xVal = ((fst position) * 100)
+              yVal = ((snd position) * 100)      
+              updatedModel = case (plotPlayerCellOnBoard model.nextPlayer position model.board) of
+                Success b ->
+                    case (fetchGameResult b) of
+                       _ -> {
+                        model | board = b
+                        ,status = buildStatusFromResult b position
+                        ,nextPlayer = if model.nextPlayer == PlayerO then PlayerX else PlayerO
+                    }  
+                Failure msg -> {
+                  model  | status = NotValidMove msg}
+            in        
+              (updatedModel,Cmd.none)
+        TieBoard cells msg ->  ({ model  | status = NotValidMove ("Game Over as match result :" ++ msg)},Cmd.none)         
+        WinBoard cells msg sequence->  ({ model  | status = NotValidMove ("Game Over as match result :" ++ msg)},Cmd.none)           
+        EmptyBoard cesll -> ({ model  | status = NotValidMove "Play has not completed "},Cmd.none)           
 
-gameResult : List Cell -> GameBoard
-gameResult board = case (findWinnerSequence PlayerO board winSequence) of
-    True -> WinBoard board "Player O Wins the Game"
-    False -> case (findWinnerSequence PlayerX board winSequence) of
-      True -> WinBoard board "Player X Wins the Game"
-      False -> case (isFinishedBoard board) of
-        True -> TieBoard board
-        False -> PlayBoard board
+buildStatusFromResult : List Cell -> Position -> Status
+buildStatusFromResult cells position =   
+  case (fetchGameResult cells) of
+    TieBoard b msg -> GameResult msg
+    WinBoard b msg sequence-> GameResult msg
+    PlayBoard b -> LastMove (toString position)
+    _ -> Error "UnKnown"
 
-notification : Status -> (List (String,String),String)
-notification status = case status of
+fetchGameResult : List Cell -> Board
+fetchGameResult cells = case (whoWin PlayerO cells winCellSequence) of
+    Just sequence -> WinBoard cells ("Player O Wins the Game") sequence
+    Nothing -> case (whoWin PlayerX cells winCellSequence) of
+      Just sequence -> WinBoard cells ("Player X Wins the Game") sequence
+      Nothing -> case (isFinishedBoard cells) of
+        True -> TieBoard cells "Game Tie"
+        False -> PlayBoard cells
+
+statusNotification : Status -> (List (String,String),String)
+statusNotification status = case status of
     Default -> ([("color","orange")],"Welcome..")
     LastMove msg -> ([("color","green")],"LastMove - " ++ msg)
     NotValidMove msg -> ([("color","red")],"Exception - " ++ msg)
     GameResult msg -> ([("color","green")],"Result - " ++ msg)
+    Error msg -> ([("color","red")],"Error - " ++ msg)
 
 view model = let
-  notificationResponse = notification model.status  
+  notificationResponse = statusNotification model.status  
   in
     div [] [
      div [ Html.Attributes.style (fst notificationResponse) ] [Html.text (snd notificationResponse)]
-     ,Svg.svg [ version "1.1", x "0", y "0", viewBox "0 0" ,width "300",height "300"] (drawBoard model.board)  
+     ,Svg.svg [ version "1.1", x "0", y "0", viewBox "0 0" ,width "600",height "600"] (drawTilesFromCells model.board)  
     --,div [] [ button [onClick FindResult] [Html.text "Result"]]
      ]
---whoWin : Player -> List a -> List a -> Bool
-whoWin player board l = containsAll (fetchCellsByPlayer player board) l 
 
-fetchCellsByPlayer : Player -> List Cell -> List (Int,Int)
-fetchCellsByPlayer player board = List.filter (\x -> x.player == player) board |> List.map (\x -> x.position)
+filterCellsByPlayer : Player -> List Cell -> List (Int,Int)
+filterCellsByPlayer player cells = List.filter (\x -> x.player == player) cells |> List.map (\x -> x.position)
 
 isFinishedBoard : List Cell -> Bool
-isFinishedBoard board = List.isEmpty (List.filter (\x -> x.player == Empty) board)
+isFinishedBoard cells = List.isEmpty (List.filter (\x -> x.player == Empty) cells)
 
-findWinnerSequence : Player -> List Cell -> List (List (Int,Int)) -> Bool
-findWinnerSequence player board l = case l of
-  [] -> False
-  (x::xs) -> case (whoWin player board x) of
-    True -> True
-    False -> findWinnerSequence player board xs
+whoWin : Player -> List Cell -> List (List Position) -> Maybe (List ( Int, Int ))
+whoWin player cells l = case l of
+  [] -> Nothing
+  (x::xs) -> case (isSubsetOf (filterCellsByPlayer player cells) x) of
+    True -> Just x
+    False -> whoWin player cells xs
 
-containsAll : List a -> List a -> Bool
-containsAll mainl subl = 
-  case subl of
-    [] -> True
-    (x::xs) -> case (List.member x mainl) of
-       True -> containsAll mainl xs
-       False -> False
+drawTilesFromCells : List Cell -> List (Svg Msg)
+drawTilesFromCells cells = List.map cellToTileBuilder cells
 
-drawBoard : List Cell -> List (Svg Msg)
-drawBoard board = List.map  drawBoardMap board
-
-drawBoardMap cell = 
+cellToTileBuilder cell = 
     let
-      xVal = ((fst cell.position) * 100)
-      yVal = ((snd cell.position) * 100)
+      size = 100
+      strokeWidthSize = 20
+      times = 1
+      xVal = ((fst cell.position) * size)
+      yVal = ((snd cell.position) * size)
       boardBgColor = "#a3c2c2"                   
       symbolColor = "#4d4d4d"      
     in
     case cell.player of
       PlayerO ->        
         g [] [
-        rect [onClick (Played (cell.position)), fill boardBgColor, stroke symbolColor, x (toString xVal), y (toString yVal), width "100", height "100"][]                
-        ,circle [onClick (Played (cell.position)), fill symbolColor, cx (toString (xVal+50)), cy (toString (yVal+50)), r "50" ] []
-        ,circle [onClick (Played (cell.position)), fill boardBgColor, cx (toString (xVal+50)), cy (toString (yVal+50)), r "30" ] []
+        rect [onClick (Played (cell.position)), fill boardBgColor, stroke symbolColor, x (toString xVal), y (toString yVal), width (toString size), height (toString size)][]                
+        ,circle [onClick (Played (cell.position)), fill symbolColor, cx (toString ((xVal + 50) * times)), cy (toString ((yVal + 50) * times)), r "50" ] []
+        ,circle [onClick (Played (cell.position)), fill boardBgColor, cx (toString ((xVal + 50) * times)), cy (toString ((yVal + 50) * times)), r "30" ] []
         ]
       PlayerX -> 
          g [] [
-        rect [onClick (Played (cell.position)), fill boardBgColor, stroke symbolColor, x (toString ((fst cell.position) * 100)), y (toString ((snd cell.position)*100)), width "100", height "100"][]        
-        ,line [onClick (Played (cell.position)), x1 (toString (xVal + 10)), y1 (toString (yVal + 10)), x2 (toString (xVal + 90)), y2 (toString (yVal + 90)), stroke symbolColor,strokeWidth "20"] []
-        ,line [onClick (Played (cell.position)), x1 (toString (xVal + 10)), y1 (toString (yVal + 90)), x2 (toString (xVal + 90)), y2 (toString (yVal + 10)), stroke symbolColor,strokeWidth "20"] []
+        rect [onClick (Played (cell.position)), fill boardBgColor, stroke symbolColor, x (toString ((fst cell.position) * size)), y (toString ((snd cell.position) * size)), width (toString size), height (toString size)][]        
+        ,line [onClick (Played (cell.position)), x1 (toString (xVal + 10)), y1 (toString (yVal + 10)), x2 (toString (xVal + 90)), y2 (toString (yVal + 90)), stroke symbolColor,strokeWidth (toString strokeWidthSize)] []
+        ,line [onClick (Played (cell.position)), x1 (toString (xVal + 10)), y1 (toString (yVal + 90)), x2 (toString (xVal + 90)), y2 (toString (yVal + 10)), stroke symbolColor,strokeWidth (toString strokeWidthSize)] []
         ]
       Empty ->
-        rect [onClick (Played (cell.position)), fill symbolColor, stroke boardBgColor, x (toString ((fst cell.position) * 100)), y (toString ((snd cell.position)*100)), width "100", height "100"][]   
+        rect [onClick (Played (cell.position)), fill symbolColor, stroke boardBgColor, x (toString ((fst cell.position) * size)), y (toString ((snd cell.position) * size)), width (toString size), height (toString size)][]   
 
-updateBoard : Player -> (Int,Int) -> List Cell -> Response
-updateBoard player point board =  
-  case (hasOccupied point board) of    
+plotPlayerCellOnBoard : Player -> Position -> List Cell -> BoardUpdateResponse
+plotPlayerCellOnBoard player position cells =  
+  case (hasOccupied position cells) of    
     Empty ->         
-        Board (List.map (updateBoardMap player point) board)    
-    _ -> Error "Invalid Move"
+        Success (List.map 
+                 (\ cell -> case (position == cell.position) of 
+                    True -> Cell position player
+                    False -> cell) 
+                 cells)    
+    _ -> Failure "Invalid Move"
 
-updateBoardMap : Player -> (Int,Int) -> Cell -> Cell
-updateBoardMap player updatePoint currentCell =     
-  case (updatePoint == currentCell.position) of
-    True -> Cell updatePoint player
-    False -> currentCell
 
-hasOccupied : (Int,Int) -> List Cell -> Player
-hasOccupied point board = 
+hasOccupied : Position -> List Cell -> Player
+hasOccupied position cells = 
   let 
-    cell = List.head (List.filter (\currentCell -> currentCell.position == point) board)
+    cell = List.head (List.filter (\currentCell -> currentCell.position == position) cells)
   in     
     case cell of
       Just val -> val.player
@@ -152,7 +155,19 @@ init = (model , Cmd.none)
 subscriptions : Model -> Sub Msg
 subscriptions model = Sub.none  
 
-drawBoardList = [
+-- Util --
+
+isSubsetOf : List a -> List a -> Bool
+isSubsetOf mainl subl = 
+  case subl of
+    [] -> True
+    (x::xs) -> case (List.member x mainl) of
+       True -> isSubsetOf mainl xs
+       False -> False
+
+-- Static Data --
+
+defaultCells = [
    Cell (0,0) Empty
   ,Cell (0,1) Empty
   ,Cell (0,2) Empty
@@ -164,7 +179,7 @@ drawBoardList = [
   ,Cell (2,2) Empty 
   ]
 
-winSequence = [
+winCellSequence = [
  [(0,0),(0,1),(0,2)]
  ,[(0,0),(1,0),(2,0)]
  ,[(0,0),(1,1),(2,2)]
